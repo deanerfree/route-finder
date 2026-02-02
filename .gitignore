@@ -24,3 +24,7 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# SSH keys - never commit these!
+key
+key.pub
