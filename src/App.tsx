@@ -2,6 +2,10 @@ import { useState,useEffect,useRef } from 'react'
 import type { FormEvent } from 'react'
 import mapbox from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
+import { reqRigList } from '.'
+import { Temporal } from '@js-temporal/polyfill'
+import Map from './Map'
+import { CollapsiblePanel } from './components/CollapsiblePanel'
 
 interface DirectionStep {
   step: number
@@ -29,7 +33,7 @@ interface MapboxDirectionsResponse {
   routes: MapboxRoute[]
 }
 
-function App() {
+function App () {
   const [startLocation,setStartLocation] = useState('')
   const [endLocation,setEndLocation] = useState('')
   const [directions,setDirections] = useState<DirectionStep[] | null>(null)
@@ -38,7 +42,6 @@ function App() {
   const [loadingLocation,setLoadingLocation] = useState<boolean>(true)
   const [currentStep,setCurrentStep] = useState<'start' | 'end' | 'complete'>('start')
   const mapRef = useRef<mapboxgl.Map | null>(null)
-  const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const startMarkerRef = useRef<mapboxgl.Marker | null>(null)
   const endMarkerRef = useRef<mapboxgl.Marker | null>(null)
 
@@ -169,7 +172,8 @@ function App() {
 
           // Look for highway/freeway/major road names
           // Match patterns like "Continue on I-5", "Turn onto Highway 101", etc.
-          const roadMatch = instruction.match(/(?:on|onto|along)\s+([^,.]+?)(?:\s|$|,|.)/i)
+          // const roadMatch = instruction.match(/(?:on|onto|along)\s+([^,.]+?)(?:\s|$|,|.)/i)
+          const roadMatch = instruction
 
           // Filter to include only significant roads (highways, interstates, major streets)
           const isSignificant =
@@ -182,8 +186,8 @@ function App() {
             instruction.includes('sr-') ||
             step.distance > 1000 // Roads longer than 1km are likely significant
 
-          if (roadMatch && isSignificant) {
-            const roadName = roadMatch[1].trim()
+          if (roadMatch) {
+            const roadName = roadMatch
             simplifiedSteps.push({
               step: stepCounter++,
               instruction: roadName,
@@ -257,12 +261,18 @@ function App() {
     window.open(url, '_blank')
   }
 
+  const currentTime = Temporal.Now.instant().epochMilliseconds
+  const pinData = reqRigList(`https://riggertalk.com/ajax/get_drilling_rigs_web.php?centerLat=62.304621&centerLng=-109.995117&keyword=&districtID=&statusDrilling=&statusMoving=&statusDown=&mapBounds=&timestamp=${currentTime}`)
+  .then(data => {return data})
+  
   useEffect(() => {
     if (!navigator.geolocation) {
       console.log('Geolocation is not supported by your browser')
       return
     }
 
+  
+    console.log('pins',pinData)
     const position = navigator.geolocation.getCurrentPosition((position) => {
       setUserCoords({
         lat: position.coords.latitude,
@@ -280,118 +290,19 @@ function App() {
     }
   },[])
 
-  useEffect(() => {
-    console.log('userCoords changed:',userCoords)
-    if (mapContainerRef.current && !mapRef.current && loadingLocation !== true && userCoords) {
-      mapbox.accessToken = import.meta.env.VITE_MAPBOX_API_KEY
-      mapRef.current = new mapbox.Map({
-        container: mapContainerRef.current,
-        style: 'mapbox://styles/mapbox/streets-v12',
-        center: [userCoords.lng,userCoords.lat],
-        zoom: 10,
-      })
-
-      mapRef.current.addControl(
-        new mapbox.GeolocateControl({
-          positionOptions: {
-            enableHighAccuracy: true
-          },
-          trackUserLocation: true,
-          showUserHeading: true
-        })
-      )
-
-      // mapRef.current.on('geolocate',(e) => {
-      //   setUserCoords({ lat: e.coords.latitude,lng: e.coords.longitude })
-      // })
-
-      mapRef.current.addControl(new mapbox.NavigationControl())
-
-      let pressTimer: number | null = null
-      let feedbackMarker: mapboxgl.Marker | null = null
-
-      const cleanup = () => {
-        if (pressTimer) {
-          clearTimeout(pressTimer)
-          pressTimer = null
-        }
-        if (feedbackMarker) {
-          feedbackMarker.remove()
-          feedbackMarker = null
-        }
-      }
-
-      // Mouse down - start timer and show feedback
-      mapRef.current.on('mousedown',(e) => {
-        cleanup()
-
-        // Create pulsing feedback circle
-        const feedbackEl = document.createElement('div')
-        feedbackEl.className = 'press-feedback'
-
-        feedbackMarker = new mapbox.Marker({
-          element: feedbackEl,
-          anchor: 'center'
-        })
-          .setLngLat(e.lngLat)
-          .addTo(mapRef.current!)
-
-        pressTimer = window.setTimeout(() => {
-          handleMapClick({ lat: e.lngLat.lat, lng: e.lngLat.lng })
-          cleanup()
-        },500)
-      })
-
-      // Cancel on mouseup (finger/click released)
-      mapRef.current.on('mouseup',cleanup)
-
-      // Cancel when map starts dragging (not just any mousemove)
-      mapRef.current.on('dragstart',cleanup)
-
-      // Touch events for mobile
-      mapRef.current.on('touchstart',(e) => {
-        cleanup()
-
-        const feedbackEl = document.createElement('div')
-        feedbackEl.className = 'press-feedback'
-
-        feedbackMarker = new mapbox.Marker({
-          element: feedbackEl,
-          anchor: 'center'
-        })
-          .setLngLat(e.lngLat)
-          .addTo(mapRef.current!)
-
-        pressTimer = window.setTimeout(() => {
-          handleMapClick({ lat: e.lngLat.lat, lng: e.lngLat.lng })
-          cleanup()
-        },500)
-      })
-
-      mapRef.current.on('touchend',cleanup)
-      // Also cancel on touch move (dragging on mobile)
-      mapRef.current.on('touchmove',cleanup)
-    }
-
-    return () => {
-      if (startMarkerRef.current) {
-        startMarkerRef.current.remove()
-      }
-      if (endMarkerRef.current) {
-        endMarkerRef.current.remove()
-      }
-      if (mapRef.current) {
-        mapRef.current.remove()
-        mapRef.current = null
-      }
-    }
-  },[loadingLocation])
 
   return (
     <div className="app">
       {/* Fullscreen Map */}
       <section className="map-section">
-        {loadingLocation ? <div className="spinner" /> : <div ref={mapContainerRef} id="map-container" />}
+        <Map
+          loadingLocation={loadingLocation}
+          userCoords={userCoords}
+          handleMapClick={handleMapClick}
+          startMarkerRef={startMarkerRef}
+          endMarkerRef={endMarkerRef}
+          mapRef={mapRef}
+        />
       </section>
 
       {/* Floating Header */}
@@ -400,7 +311,7 @@ function App() {
       </header>
 
       {/* Floating Input Panel */}
-      <section className="input-section">
+      <CollapsiblePanel title="Route" className="input-section">
         <div className="step-indicator">
           <div className={`step-badge ${currentStep === 'start' ? 'active' : 'completed'}`}>
             {currentStep === 'start' ? '1' : '✓'}
@@ -447,75 +358,72 @@ function App() {
             </button>
           </div>
         </form>
-      </section>
+      </CollapsiblePanel>
 
       {/* Floating Directions Panel */}
-      <section className="directions-section">
-        <div className="directions-header">
-          <h2>Directions</h2>
-          {directions && !isLoading && (
-            <div className="share-buttons">
-              <button
-                className="share-btn google-maps-btn"
-                onClick={openInGoogleMaps}
-                title="Open in Google Maps"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="currentColor"/>
-                </svg>
-                Google Maps
-              </button>
-              <button
-                className="share-btn apple-maps-btn"
-                onClick={openInAppleMaps}
-                title="Open in Apple Maps"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" fill="currentColor"/>
-                </svg>
-                Apple Maps
-              </button>
+      {(directions || isLoading) && (
+        <CollapsiblePanel
+          title="Directions"
+          className="directions-section"
+          headerExtra={
+            directions && !isLoading ? (
+              <div className="share-buttons">
+                <button
+                  className="share-btn google-maps-btn"
+                  onClick={(e) => { e.stopPropagation(); openInGoogleMaps() }}
+                  title="Open in Google Maps"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="currentColor"/>
+                  </svg>
+                  Google Maps
+                </button>
+                <button
+                  className="share-btn apple-maps-btn"
+                  onClick={(e) => { e.stopPropagation(); openInAppleMaps() }}
+                  title="Open in Apple Maps"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" fill="currentColor"/>
+                  </svg>
+                  Apple Maps
+                </button>
+              </div>
+            ) : undefined
+          }
+        >
+          {isLoading && (
+            <div className="directions-loading">
+              <div className="spinner"></div>
+              <p>Calculating route...</p>
             </div>
           )}
-        </div>
 
-        {!directions && !isLoading && (
-          <div className="directions-empty">
-            <p>Enter a starting point and destination to get directions</p>
-          </div>
-        )}
+          {directions && !isLoading && (
+            <div className="directions-list">
+              <div className="route-summary">
+                <span className="route-from">{startLocation}</span>
+                <span className="route-arrow">→</span>
+                <span className="route-to">{endLocation}</span>
+              </div>
 
-        {isLoading && (
-          <div className="directions-loading">
-            <div className="spinner"></div>
-            <p>Calculating route...</p>
-          </div>
-        )}
-
-        {directions && !isLoading && (
-          <div className="directions-list">
-            <div className="route-summary">
-              <span className="route-from">{startLocation}</span>
-              <span className="route-arrow">→</span>
-              <span className="route-to">{endLocation}</span>
+              <ol className="steps">
+                {directions.map((dir) => (
+                  <li key={dir.step} className="step">
+                    <span className="step-number">{dir.step}</span>
+                    <div className="step-content">
+                      <p className="step-instruction">{dir.instruction}</p>
+                      {dir.distance && (
+                        <span className="step-distance">{dir.distance}</span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ol>
             </div>
-
-            <ol className="steps">
-              {directions.map((dir) => (
-                <li key={dir.step} className="step">
-                  <span className="step-number">{dir.step}</span>
-                  <div className="step-content">
-                    <p className="step-instruction">{dir.instruction}</p>
-                    {dir.distance && (
-                      <span className="step-distance">{dir.distance}</span>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </div>
-        )}
-      </section>
+          )}
+        </CollapsiblePanel>
+      )}
     </div>
   )
 }
